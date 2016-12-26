@@ -6,7 +6,7 @@ import json
 
 import setting
 
-def crop_and_save(file_list, path):
+def crop_and_save(file_list, path, name):
 
   num_threads = 6
   batch_size = 6
@@ -16,7 +16,7 @@ def crop_and_save(file_list, path):
   print type(file_list[0])
   #print file_list
 
-  file_queue = tf.train.string_input_producer(file_list, shuffle=False)
+  file_queue = tf.train.string_input_producer(file_list, shuffle=False, num_epochs=None, name=name)
   # crop data
   reader = tf.WholeFileReader()
   key, value = reader.read(file_queue)
@@ -32,22 +32,29 @@ def crop_and_save(file_list, path):
 
   with tf.Session(config=tf.ConfigProto(intra_op_parallelism_threads=num_threads)) as sess:
     coord = tf.train.Coordinator()
+    init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+    sess.run(init_op)
     threads = tf.train.start_queue_runners(sess, coord)
 
-    sess.run(tf.global_variables_initializer())
+    #init_op = tf.group(tf.initialize_all_variables(), tf.initialize_local_variables())
+    #sess.run(tf.local_variables_initializer())
+    #sess.run(tf.global_variables_initializer())
 
-    for batch_i in range(0, (len(file_list) + batch_size - 1)/batch_size):
-      resized_result = sess.run(encoded_list)
-      print "=================================="
-      print len(resized_result)
-      print path
-      for i in range(0, len(resized_result)):
-        index = batch_i*batch_size + i
-        if index < len(file_list):
-          filename = os.path.join(path, os.path.basename(file_list[index]))
-          print "save to:",filename
-          with open(filename, "wb+") as save_file:
-            save_file.write(resized_result[i])
+    try:
+      for batch_i in range(0, (len(file_list) + batch_size - 1)/batch_size):
+        resized_result = sess.run(encoded_list)
+        print "=================================="
+        print len(resized_result)
+        print path
+        for i in range(0, len(resized_result)):
+          index = batch_i*batch_size + i
+          if index < len(file_list):
+            filename = os.path.join(path, os.path.basename(file_list[index]))
+            print "save to:",filename
+            with open(filename, "wb+") as save_file:
+              save_file.write(resized_result[i])
+    except tf.errors.OutOfRangeError:
+      print "The last epoch ends."
 
     coord.request_stop()
     coord.join(threads)
@@ -74,9 +81,9 @@ if __name__ == '__main__':
     offset = offset + size
     train_file_list = trainimglist[offset:]
 
-    crop_and_save(train_file_list, "./train")
-    crop_and_save(validation_file_list, "./validation")
-    crop_and_save(test_file_list, "./test")
+    crop_and_save(train_file_list, "./train", "train")
+    crop_and_save(validation_file_list, "./validation", "valid")
+    crop_and_save(test_file_list, "./test", "test")
 
     print "train file size:", len(train_file_list)
     print "validation file size:", len(validation_file_list)
