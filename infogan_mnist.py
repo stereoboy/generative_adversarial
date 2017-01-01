@@ -178,7 +178,7 @@ def gen_model(z_vecs, WPJ, WGs):
 def get_regularization(cd, cc, cd_samples, cc_samples):
 
   cd_cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(cd, cd_samples))
-  cc_cross_entropy = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(cc, cc_samples))
+  cc_cross_entropy = tf.reduce_sum(tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(cc, cc_samples), 0))
   
   return cd_cross_entropy + cc_cross_entropy
 
