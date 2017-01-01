@@ -7,8 +7,11 @@
 
 ## EBGAN
 * Generate face images based on CelebA data
+
 ## DCGAN
 * Generate face images based on CelebA data
+
 ## InfoGAN
+* Generate  hand-written number images based on mnist data
 
 ## Adversarial Autoencoders
