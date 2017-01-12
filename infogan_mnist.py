@@ -54,7 +54,7 @@ def batch_norm_layer(tensors ,scope_bn, reuse):
 
 def init_disc_weights():
   def init_with_normal():
-    tf.random_normal_initializer(mean=0.0, stddev=0.02)
+    return tf.truncated_normal_initializer(mean=0.0, stddev=0.02)
 
   ch_size = FLAGS.d_ch_size
   # initialize weights, biases for Encoder
@@ -120,7 +120,7 @@ def disc_model(x, WEs, WFCS, WY, WC, reuse):
 
 def init_gen_weights():
   def init_with_normal():
-    tf.random_normal_initializer(mean=0.0, stddev=0.02)
+    return tf.truncated_normal_initializer(mean=0.0, stddev=0.02)
 
   ch_size = FLAGS.g_ch_size
 

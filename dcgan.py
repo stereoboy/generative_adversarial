@@ -48,7 +48,7 @@ def batch_norm_layer(tensors ,scope_bn, reuse):
 
 def init_disc_weights():
   def init_with_normal():
-    tf.random_normal_initializer(mean=0.0, stddev=0.02)
+    return tf.truncated_normal_initializer(mean=0.0, stddev=0.02)
 
   ch_size = FLAGS.d_ch_size
   # initialize weights, biases for Encoder
@@ -104,7 +104,7 @@ def disc_model(x, WEs, WY, reuse):
 
 def init_gen_weights():
   def init_with_normal():
-    tf.random_normal_initializer(mean=0.0, stddev=0.02)
+    return tf.truncated_normal_initializer(mean=0.0, stddev=0.02)
 
   ch_size = FLAGS.g_ch_size
 
@@ -310,8 +310,8 @@ def main(args):
         current = datetime.now()
         print "\telapsed:", current - start
 
-        cv2.waitKey(5)
         cv2.imshow('sample', cv2.cvtColor(img_listup(sample_val, contrastive_sample_val),cv2.COLOR_RGB2BGR))
+        cv2.waitKey(5)
         import scipy.misc
         #scipy.misc.imsave("generated"+current.strftime("%Y%m%d_%H%M%S")+".png", contrastive_sample_val)
         scipy.misc.imsave(save_dir + "/generated"+"%02d"%(itr%100)+".png", contrastive_sample_val)
