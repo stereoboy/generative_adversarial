@@ -87,3 +87,7 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+checkpoints/*.png
+dc_checkpoints/*.png
+info_mnist_checkpoints/*.png
