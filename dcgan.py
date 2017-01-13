@@ -21,8 +21,8 @@ import getopt
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("channel", "3", "batch size for training")
-tf.flags.DEFINE_integer("max_itrs", "10000", "maximum iterations for training")
-tf.flags.DEFINE_integer("batch_size", "64", "batch size for training")
+tf.flags.DEFINE_integer("max_itrs", "50000", "maximum iterations for training")
+tf.flags.DEFINE_integer("batch_size", "128", "batch size for training")
 tf.flags.DEFINE_integer("z_dim", "100", "size of input vector to generator")
 tf.flags.DEFINE_float("learning_rate", "1e-3", "Learning rate for Adam Optimizer")
 tf.flags.DEFINE_float("eps", "1e-5", "epsilon for various operation")
@@ -233,6 +233,7 @@ def main(args):
     validation_file_list  = data['valid']
     test_file_list        = data['test']
 
+  size_per_epoch = len(data['train'])
   samples = get_samples(train_file_list)
   z_vecs = tf.placeholder(tf.float32, [None, FLAGS.z_dim], name="z_vecs")
 
@@ -294,7 +295,7 @@ def main(args):
         feed_dict = {z_vecs:z_samples, }
 
         print "------------------------------------------------------"
-        print "[%05d]" % itr
+        print "[%05d] %05d/%5d" % (itr, (itr+1)*FLAGS.batch_size, size_per_epoch)
 
         cost_sample_val, _ = sess.run([cost_sample, disc_opt], feed_dict=feed_dict)
 
@@ -305,16 +306,17 @@ def main(args):
 
         print "\tcost_contrastive=", cost_contrastive_val, "points_contrastive[0]:",points_contrastive_val[0]
 
-        sample_val, contrastive_sample_val = sess.run([samples[0], contrastive_samples_imgs[0]], feed_dict=feed_dict)
 
         current = datetime.now()
         print "\telapsed:", current - start
 
-        cv2.imshow('sample', cv2.cvtColor(img_listup(sample_val, contrastive_sample_val),cv2.COLOR_RGB2BGR))
+        if itr > 1 and itr % 10 == 0:
+          sample_val, contrastive_sample_val = sess.run([samples[0], contrastive_samples_imgs[0]], feed_dict=feed_dict)
+          cv2.imshow('sample', cv2.cvtColor(img_listup(sample_val, contrastive_sample_val),cv2.COLOR_RGB2BGR))
+          import scipy.misc
+          #scipy.misc.imsave("generated"+current.strftime("%Y%m%d_%H%M%S")+".png", contrastive_sample_val)
+          scipy.misc.imsave(save_dir + "/generated"+"%02d"%((itr/10)%100)+".png", contrastive_sample_val)
         cv2.waitKey(5)
-        import scipy.misc
-        #scipy.misc.imsave("generated"+current.strftime("%Y%m%d_%H%M%S")+".png", contrastive_sample_val)
-        scipy.misc.imsave(save_dir + "/generated"+"%02d"%(itr%100)+".png", contrastive_sample_val)
         if itr > 1 and itr % 300 == 0:
           #energy_d_val, loss_d_val, loss_g_val = sess.run([energy_d, loss_d, loss_g])
           print "#######################################################"
