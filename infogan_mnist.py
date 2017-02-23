@@ -177,8 +177,8 @@ def gen_model(z_vecs, WPJ, WGs):
 
 def get_regularization(cd, cc, cd_samples, cc_samples):
 
-  cd_cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(cd, cd_samples))
-  cc_cross_entropy = tf.reduce_sum(tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(cc, cc_samples), 0))
+  cd_cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=cd, labels=cd_samples))
+  cc_cross_entropy = tf.reduce_sum(tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=cc, labels=cc_samples), 0))
   
   return cd_cross_entropy + cc_cross_entropy
 
@@ -230,7 +230,7 @@ def main(args):
   
   cc_samples = tf.random_uniform([FLAGS.batch_size, FLAGS.cc_dim], minval = -1.0, maxval=1.0)
   
-  z_vecs = tf.concat(1, [z_samples, cd_samples, cc_samples])
+  z_vecs = tf.concat(axis=1, values=[z_samples, cd_samples, cc_samples])
 
   samples = tf.placeholder(tf.float32, [None, FLAGS.img_size, FLAGS.img_size, 1])
 
@@ -241,12 +241,12 @@ def main(args):
     WPJ, WGs = init_gen_weights()
 
   logits_data, _, _ = disc_model(preprocess(samples), WEs, WFCS, WY, WC, False)
-  cost_sample = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits_data, tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
+  cost_sample = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_data, labels=tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
   contrastive_samples = gen_model(z_vecs, WPJ, WGs)
   logits_contrastive, contrastive_cd, contrastive_cc = disc_model(contrastive_samples, WEs, WFCS, WY, WC, True)
-  negative_cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits_contrastive, tf.constant(0.0, shape=[FLAGS.batch_size, 1])))
+  negative_cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_contrastive, labels=tf.constant(0.0, shape=[FLAGS.batch_size, 1])))
 
-  cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits_contrastive, tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
+  cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_contrastive, labels=tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
 
   reg_loss = get_regularization(contrastive_cd, contrastive_cc, cd_samples, cc_samples)
   loss_d = cost_sample + negative_cost_contrastive + reg_loss

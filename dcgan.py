@@ -245,13 +245,13 @@ def main(args):
 
 
   logits_sample, _ = disc_model(preprocess(samples), WEs, WY, False)
-  cost_sample = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits_sample, tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
+  cost_sample = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_sample, labels=tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
 
   contrastive_samples = gen_model(z_vecs, WPJ, WGs)
   logits_contrastive, contrastive_encoded = disc_model(contrastive_samples, WEs, WY, True)
-  negative_cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits_contrastive, tf.constant(0.0, shape=[FLAGS.batch_size, 1])))
+  negative_cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_contrastive, labels=tf.constant(0.0, shape=[FLAGS.batch_size, 1])))
 
-  cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits_contrastive, tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
+  cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_contrastive, labels=tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
 
   loss_d = cost_sample + negative_cost_contrastive
   loss_g = cost_contrastive
