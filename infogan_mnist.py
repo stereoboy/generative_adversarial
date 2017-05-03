@@ -9,6 +9,7 @@ from datetime import datetime, date, time
 import cv2
 import sys
 import getopt
+import random
 
 ############################################################
 #
@@ -25,7 +26,7 @@ import getopt
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("channel", "1", "batch size for training")
-tf.flags.DEFINE_integer("max_itrs", "10000", "maximum iterations for training")
+tf.flags.DEFINE_integer("max_epoch", "1000", "maximum iterations for training")
 tf.flags.DEFINE_integer("batch_size", "128", "batch size for training")
 tf.flags.DEFINE_integer("z_dim", "62", "size of input vector to generator")
 tf.flags.DEFINE_integer("cd_dim", "10", "size of discrete code")
@@ -157,7 +158,7 @@ def gen_model(z_vecs, WPJ, WGs):
   projected = tf.matmul(z_vecs, WPJ[0])
   normalized = batch_norm_layer(projected, "generator/bnpj0", False)
   relued = tf.nn.relu(normalized)
-  
+
   projected = tf.matmul(relued, WPJ[1])
   reshaped = tf.reshape(projected, [-1, first_layer_w, first_layer_w, 128])
   normalized = batch_norm_layer(reshaped, "generator/bnpj1", False)
@@ -179,16 +180,16 @@ def get_regularization(cd, cc, cd_samples, cc_samples):
 
   cd_cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=cd, labels=cd_samples))
   cc_cross_entropy = tf.reduce_sum(tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=cc, labels=cc_samples), 0))
-  
+
   return cd_cross_entropy + cc_cross_entropy
 
 def get_opt(loss_val, scope):
   var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
 
-  print "============================"
-  print scope
+  print("============================")
+  print(scope)
   for item in var_list:
-    print item.name
+    print(item.name)
 
   optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate, beta1=FLAGS.beta1)
   grads = optimizer.compute_gradients(loss_val, var_list=var_list)
@@ -217,19 +218,26 @@ def main(args):
   for o, arg in opts:
     if o in ("-s", "--save_dir"):
       save_dir=arg
-      print "checkpoint dir:", save_dir
+      print("checkpoint dir:" + save_dir)
 
   mnist = read_data_sets("./train_mnist")
 
+  train_set = mnist.train.images
+  val_set = mnist.validation.images
+  test_set = mnist.test.images
+
+  #train_set = np.concatenate([train_set, val_set, test_set], axis=0)
+  train_size = len(train_set)
+
   # setup for noise and code sample
   z_samples = tf.random_uniform([FLAGS.batch_size, FLAGS.z_dim], minval= -1.0, maxval=1.0)
-  
+
   cd_samples_ = tf.reshape(tf.multinomial([[1.0]*FLAGS.cd_dim], FLAGS.batch_size), (-1, 1))
   onehot = tf.constant(np.eye(FLAGS.cd_dim, dtype=np.float32))
   cd_samples = tf.reshape(tf.nn.embedding_lookup(onehot, cd_samples_), (-1, FLAGS.cd_dim))
-  
+
   cc_samples = tf.random_uniform([FLAGS.batch_size, FLAGS.cc_dim], minval = -1.0, maxval=1.0)
-  
+
   z_vecs = tf.concat(axis=1, values=[z_samples, cd_samples, cc_samples])
 
   samples = tf.placeholder(tf.float32, [None, FLAGS.img_size, FLAGS.img_size, 1])
@@ -257,69 +265,89 @@ def main(args):
 
   points_data = tf.sigmoid(logits_data)
   points_contrastive = tf.sigmoid(logits_contrastive)
-  
+
   start = datetime.now()
-  print "Start: ",  start.strftime("%Y-%m-%d_%H-%M-%S")
+  print("Start: " +  start.strftime("%Y-%m-%d_%H-%M-%S"))
   num_threads = FLAGS.num_threads
   with tf.Session(config=tf.ConfigProto(intra_op_parallelism_threads=num_threads)) as sess:
     sess.run(tf.global_variables_initializer())
 
     saver = tf.train.Saver()
     checkpoint = tf.train.latest_checkpoint(save_dir)
-    print "checkpoint: %s" % checkpoint
+    print("checkpoint: %s" % checkpoint)
     if checkpoint:
-      print "Restoring from checkpoint", checkpoint
+      print("Restoring from checkpoint %s"%checkpoint)
       saver.restore(sess, checkpoint)
     else:
-      print "Couldn't find checkpoint to restore from. Starting over."
+      print("Couldn't find checkpoint to restore from. Starting over.")
       dt = datetime.now()
       filename = "checkpoint" + dt.strftime("%Y-%m-%d_%H-%M-%S")
       checkpoint = os.path.join(save_dir, filename)
 
-    try:
-      for itr in range(FLAGS.max_itrs):
+    max_itr = train_size//FLAGS.batch_size
+    for epoch in range(FLAGS.max_epoch):
+      random.shuffle(train_set)
+      print("#####################################################################")
+      for itr in range(0, max_itr):
 
-        batch_data, _ = mnist.train.next_batch(FLAGS.batch_size)
+        begin = itr*FLAGS.batch_size
+        end = (itr + 1)*FLAGS.batch_size
+        batch_data = train_set[begin:end]
         batch_data = batch_data.reshape(-1, FLAGS.img_size, FLAGS.img_size, 1)
 
         feed_dict = {samples: batch_data}
 
-        print "------------------------------------------------------"
-        print "[%05d]" % itr
+        _, cost_sample_val, points_data_val = sess.run([disc_opt, cost_sample, points_data], feed_dict=feed_dict)
+        #cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
 
-        _ = sess.run([disc_opt], feed_dict=feed_dict)
-        cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
-        print "\tcost_sample=", cost_sample_val, "points_data[0]:", points_data_val[0]
-
-        _, cost_contrastive_val, points_contrastive_val = sess.run([gen_opt, cost_contrastive, points_contrastive], feed_dict=feed_dict)
+        sess.run(gen_opt, feed_dict=feed_dict)
         _, cost_contrastive_val, points_contrastive_val = sess.run([gen_opt, cost_contrastive, points_contrastive], feed_dict=feed_dict)
 
-        print "\tcost_contrastive=", cost_contrastive_val, "points_contrastive[0]:",points_contrastive_val[0]
+        if itr > 1 and itr % 10 == 0:
+          print("===================================================================")
+          print("[%d] %03d/%d"%(epoch, itr, max_itr))
 
-        sample_val = sess.run([samples[0]], feed_dict=feed_dict)
-        cd_val, cc_val, contrastive_sample_val = sess.run([cd_samples[0], cc_samples[0],  contrastive_samples[0]], feed_dict=feed_dict)
-        print "cd", cd_val
-        print "cc", cc_val
+          #cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
+          print("\tcost_sample=%f points_data[0]:%f"%(cost_sample_val,  points_data_val[0]))
 
-        current = datetime.now()
-        print "\telapsed:", current - start
+          #cost_contrastive_val, points_contrastive_val = sess.run([cost_contrastive, points_contrastive], feed_dict=feed_dict)
+          print("\tcost_contrastive=%f points_contrastive[0]:%f"%(cost_contrastive_val, points_contrastive_val[0]))
 
-        sample_vis = convert_img(batch_data[0])
-        contrastive_sample_vis = convert_img(contrastive_sample_val)
+          #sample_val = sess.run([samples[0]], feed_dict=feed_dict)
+          cd_val, cc_val, contrastive_sample_val = sess.run([cd_samples, cc_samples,  contrastive_samples], feed_dict=feed_dict)
+          print("\tcd:{}".format(cd_val[0]))
+          print("\tcc:{}".format(cc_val[0]))
 
-        cv2.imshow('sample', img_listup(sample_vis, contrastive_sample_vis))
+          current = datetime.now()
+          print("\telapsed:", current - start)
+
+          sample_vis = convert_img(batch_data[0])
+          contrastive_sample_vis = convert_img(contrastive_sample_val[0])
+
+          cv2.imshow('sample', img_listup(sample_vis, contrastive_sample_vis))
+          filepath = os.path.join(save_dir, "generated" + "_%d"%(np.argmax(cd_val)) + "_%02d"%(epoch) + "_%02d"%(itr%100) + ".png")
+
+          scipy.misc.imsave(filepath, contrastive_sample_vis)
         cv2.waitKey(5)
-        filepath = os.path.join(save_dir, "generated"+"%02d"%(itr%100) + "_%d"%(np.argmax(cd_val)) + ".png")
-        
-        scipy.misc.imsave(filepath, contrastive_sample_vis)
-        if itr > 1 and itr % 300 == 0:
-          #energy_d_val, loss_d_val, loss_g_val = sess.run([energy_d, loss_d, loss_g])
-          print "#######################################################"
-          #print "\tE=", energy_d_val, "Ld(x, z)=", loss_d, "Lg(z)=", loss_g
-          saver.save(sess, checkpoint)
 
-    except tf.errors.OutOfRangeError:
-      print "the last epoch ends."
+      # evaluate
+      total_cost_val = 0.0
+      max_val_itr = len(val_set)//FLAGS.batch_size
+      for itr in range(0, max_val_itr):
+        begin = itr*FLAGS.batch_size
+        end = (itr + 1)*FLAGS.batch_size
+        batch_data = val_set[begin:end]
+        batch_data = batch_data.reshape(-1, FLAGS.img_size, FLAGS.img_size, 1)
+
+        feed_dict = {samples: batch_data}
+        cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
+        cost_sample_val = sess.run(cost_sample, feed_dict=feed_dict)
+        total_cost_val += cost_sample_val
+      print("Validation loss: %f"%(total_cost_val/max_val_itr))
+
+      print("#######################################################")
+      saver.save(sess, checkpoint)
+
 
     cv2.destroyAllWindows()
 
