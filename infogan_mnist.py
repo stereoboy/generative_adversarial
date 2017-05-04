@@ -26,12 +26,14 @@ import random
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("channel", "1", "batch size for training")
-tf.flags.DEFINE_integer("max_epoch", "1000", "maximum iterations for training")
+tf.flags.DEFINE_integer("max_epoch", "10", "maximum iterations for training")
 tf.flags.DEFINE_integer("batch_size", "128", "batch size for training")
 tf.flags.DEFINE_integer("z_dim", "62", "size of input vector to generator")
 tf.flags.DEFINE_integer("cd_dim", "10", "size of discrete code")
 tf.flags.DEFINE_integer("cc_dim", "2", "size of continuous code")
-tf.flags.DEFINE_float("learning_rate", "1e-3", "Learning rate for Adam Optimizer")
+tf.flags.DEFINE_float("lambda0", "1.0", "lambda for Regularization Term")
+tf.flags.DEFINE_float("learning_rate_D", "2e-4", "Learning rate for Adam Optimizer")
+tf.flags.DEFINE_float("learning_rate_G", "1e-3", "Learning rate for Adam Optimizer")
 tf.flags.DEFINE_float("eps", "1e-5", "epsilon for various operation")
 tf.flags.DEFINE_float("beta1", "0.5", "beta1 for Adam optimizer")
 tf.flags.DEFINE_float("pt_w", "0.1", "weight of pull-away term")
@@ -63,23 +65,35 @@ def init_disc_weights():
       tf.get_variable('e_conv_0', shape = [4, 4, FLAGS.channel, ch_size], initializer=init_with_normal()),
       tf.get_variable('e_conv_1', shape = [4, 4, ch_size, ch_size*2], initializer=init_with_normal()),
       ]
+  
+  BEs = [
+      tf.get_variable('e_bias_0', shape = [ch_size], initializer=tf.zeros_initializer()),
+      tf.get_variable('e_bias_1', shape = [ch_size*2], initializer=tf.zeros_initializer()),
+      ]
 
   ch_size = FLAGS.d_ch_size
   last_layer_w = FLAGS.img_size//4 # => 28/(2**2) ->7
 
   WFCS = tf.get_variable('e_fc_shared', shape = [(ch_size*2)*last_layer_w*last_layer_w, 1024], initializer=init_with_normal())
+  BFCS = tf.get_variable('e_biasfc_shared', shape = [1024], initializer=tf.zeros_initializer())
 
   WY = tf.get_variable('e_fc_y', shape = [1024, 1], initializer=init_with_normal())
+  BY = tf.get_variable('e_biasfc_y', shape = [1], initializer=tf.zeros_initializer())
 
   WC = {
       'FC':tf.get_variable('e_fc_0', shape = [1024, 128], initializer=init_with_normal()),
       'CD':tf.get_variable('e_fc_cd', shape = [128, FLAGS.cd_dim], initializer=init_with_normal()),
       'CC':tf.get_variable('e_fc_cc', shape = [128, FLAGS.cc_dim], initializer=init_with_normal()),
       }
+  BC = {
+      'FC':tf.get_variable('e_biasfc_0', shape = [128], initializer=tf.zeros_initializer()),
+      'CD':tf.get_variable('e_biasfc_cd', shape = [FLAGS.cd_dim], initializer=tf.zeros_initializer()),
+      'CC':tf.get_variable('e_biasfc_cc', shape = [FLAGS.cc_dim], initializer=tf.zeros_initializer()),
+      }
 
-  return WEs, WFCS, WY, WC
+  return WEs, BEs, WFCS, BFCS, WY, BY, WC, BC
 
-def disc_model(x, WEs, WFCS, WY, WC, reuse):
+def disc_model(x, WEs, BEs, WFCS, BFCS, WY, BY, WC, BC, reuse):
   def batch_normalization(tensor):
     mean, var = tf.nn.moments(tensor, [0, 1, 2])
     out = tf.nn.batch_normalization(tensor, mean, var, 0, 1, FLAGS.eps)
@@ -90,9 +104,11 @@ def disc_model(x, WEs, WFCS, WY, WC, reuse):
 
   # encoder
   conved = tf.nn.conv2d(x, WEs[0], strides=[1, 2, 2, 1], padding='SAME')
+  conved = tf.nn.bias_add(conved, BEs[0])
   relued = leaky_relu(conved)
 
   conved = tf.nn.conv2d(relued, WEs[1], strides=[1, 2, 2, 1], padding='SAME')
+  conved = tf.nn.bias_add(conved, BEs[1])
   normalized = batch_norm_layer(conved, "discriminator/bne1", reuse)
   relued = leaky_relu(normalized)
 
@@ -104,18 +120,23 @@ def disc_model(x, WEs, WFCS, WY, WC, reuse):
 
   # fully connected layer
   projected = tf.matmul(reshaped, WFCS)
+  projected = tf.nn.bias_add(projected, BFCS)
   normalized = batch_norm_layer(projected, "discriminator/bne2", reuse)
   shared = leaky_relu(normalized)
 
   y = tf.matmul(shared, WY)
+  y = tf.nn.bias_add(y, BY)
 
   cfc = tf.matmul(shared, WC['FC'])
+  cfc = tf.nn.bias_add(cfc, BC['FC'])
   normalized = batch_norm_layer(cfc, "discriminator/bne3", reuse)
   relued = leaky_relu(normalized)
 
   cd = tf.matmul(relued, WC['CD'])
+  cd = tf.nn.bias_add(cd, BC['CD'])
 
   cc = tf.matmul(relued, WC['CC'])
+  cc = tf.nn.bias_add(cc, BC['CC'])
 
   return y, cd, cc
 
@@ -132,6 +153,11 @@ def init_gen_weights():
       tf.get_variable('g_proj_0', shape = [dim, 1024], initializer=init_with_normal()),
       tf.get_variable('g_proj_1', shape = [1024, first_layer_w*first_layer_w*128], initializer=init_with_normal()),
       ]
+  
+  BPJ = [
+      tf.get_variable('g_biasproj_0', shape = [1024], initializer=tf.zeros_initializer()),
+      tf.get_variable('g_biasproj_1', shape = [first_layer_w*first_layer_w*128], initializer=tf.zeros_initializer()),
+      ]
 
 
   # initialize weights, biases for Generator
@@ -141,10 +167,14 @@ def init_gen_weights():
       tf.get_variable('g_conv_0', shape = [kernel_size, kernel_size, 64, 128], initializer=init_with_normal()),
       tf.get_variable('g_conv_1', shape = [kernel_size, kernel_size, 1, 64], initializer=init_with_normal()),
       ]
+  BGs = [
+      tf.get_variable('g_bias_0', shape = [64], initializer=tf.zeros_initializer()),
+      tf.get_variable('g_bias_1', shape = [1], initializer=tf.zeros_initializer()),
+      ]
 
-  return WPJ, WGs
+  return WPJ, BPJ, WGs, BGs
 
-def gen_model(z_vecs, WPJ, WGs):
+def gen_model(z_vecs, WPJ, BPJ, WGs, BGs):
   def batch_normalization(tensor):
     mean, var = tf.nn.moments(tensor, [0, 1, 2])
     out = tf.nn.batch_normalization(tensor, mean, var, 0, 1, FLAGS.eps)
@@ -156,34 +186,40 @@ def gen_model(z_vecs, WPJ, WGs):
   first_layer_w = FLAGS.img_size//4
 
   projected = tf.matmul(z_vecs, WPJ[0])
+  projected = tf.nn.bias_add(projected, BPJ[0])
   normalized = batch_norm_layer(projected, "generator/bnpj0", False)
   relued = tf.nn.relu(normalized)
 
   projected = tf.matmul(relued, WPJ[1])
+  projected = tf.nn.bias_add(projected, BPJ[1])
   reshaped = tf.reshape(projected, [-1, first_layer_w, first_layer_w, 128])
   normalized = batch_norm_layer(reshaped, "generator/bnpj1", False)
   relued = tf.nn.relu(normalized)
 
   deconved = tf.nn.conv2d_transpose(relued, WGs[0], [batch_size, 14, 14, 64], strides=[1, 2, 2, 1])
+  deconved = tf.nn.bias_add(deconved, BGs[0])
   normalized = batch_norm_layer(deconved, "generator/bng0", False)
   relued = tf.nn.relu(normalized)
 
   deconved = tf.nn.conv2d_transpose(relued, WGs[1], [batch_size, 28, 28, FLAGS.channel], strides=[1, 2, 2, 1])
+  deconved = tf.nn.bias_add(deconved, BGs[1])
   # skip batch normalization by DCGAN
-  relued = tf.nn.relu(deconved)
+  #relued = tf.nn.relu(deconved)
 
   # no tanh
-  contrastive_samples = relued
+  #contrastive_samples = tf.clip_by_value(deconved, 0, 1.0)
+  contrastive_samples = tf.sigmoid(deconved)
   return contrastive_samples
 
 def get_regularization(cd, cc, cd_samples, cc_samples):
+  # FIXME
 
   cd_cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=cd, labels=cd_samples))
   cc_cross_entropy = tf.reduce_sum(tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=cc, labels=cc_samples), 0))
 
   return cd_cross_entropy + cc_cross_entropy
 
-def get_opt(loss_val, scope):
+def get_opt_D(loss_val, scope):
   var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
 
   print("============================")
@@ -191,23 +227,46 @@ def get_opt(loss_val, scope):
   for item in var_list:
     print(item.name)
 
-  optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate, beta1=FLAGS.beta1)
+  optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate_D, beta1=FLAGS.beta1)
+  grads = optimizer.compute_gradients(loss_val, var_list=var_list)
+  return optimizer.apply_gradients(grads)
+
+def get_opt_G(loss_val, scope):
+  var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
+
+  print("============================")
+  print(scope)
+  for item in var_list:
+    print(item.name)
+
+  optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate_G, beta1=FLAGS.beta1)
   grads = optimizer.compute_gradients(loss_val, var_list=var_list)
   return optimizer.apply_gradients(grads)
 
 def preprocess(x):
   return x
 
-def img_listup(img1, img2):
-  h = img1.shape[0]
-  w = img1.shape[1]
-  out = np.zeros((h, w*2), np.uint8)
-  out[:, :64] = img1
-  out[:,64: ] = img2
+def img_listup(imgs):
+  size = len(imgs)
+  (h, w) = imgs[0].shape[:2]
+
+  total_w = 0
+  for img in imgs:
+    total_w += img.shape[1]
+  out = np.zeros((h, total_w), np.uint8)
+
+  offset = 0
+  for i in range(size):
+    h, w = imgs[i].shape[:2]
+    out[:h, offset: offset + w] = imgs[i]
+    offset += w
+
   return out
 
 def convert_img(data):
+  np.set_printoptions(threshold=np.nan)
   out = cv2.resize(255* data.reshape(FLAGS.img_size, FLAGS.img_size), (64,64), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
+  #out = cv2.resize(255* data.reshape(FLAGS.img_size, FLAGS.img_size), (64,64)).astype(np.uint8)
   return out
 
 def main(args):
@@ -243,28 +302,29 @@ def main(args):
   samples = tf.placeholder(tf.float32, [None, FLAGS.img_size, FLAGS.img_size, 1])
 
   with tf.variable_scope("discriminator") as scope:
-    WEs, WFCS, WY, WC = init_disc_weights()
+    WEs, BEs, WFCS, BFCS, WY, BY, WC, BC = init_disc_weights()
 
   with tf.variable_scope("generator") as scope:
-    WPJ, WGs = init_gen_weights()
+    WPJ, BPJ, WGs, BGs = init_gen_weights()
 
-  logits_data, _, _ = disc_model(preprocess(samples), WEs, WFCS, WY, WC, False)
+  logits_data, _, _ = disc_model(preprocess(samples), WEs, BEs, WFCS, BFCS, WY, BY, WC, BC, False)
   cost_sample = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_data, labels=tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
-  contrastive_samples = gen_model(z_vecs, WPJ, WGs)
-  logits_contrastive, contrastive_cd, contrastive_cc = disc_model(contrastive_samples, WEs, WFCS, WY, WC, True)
+
+  contrastive_samples = gen_model(z_vecs, WPJ, BPJ, WGs, BGs)
+  logits_contrastive, contrastive_cd, contrastive_cc = disc_model(contrastive_samples, WEs, BEs, WFCS, BFCS, WY, BY, WC, BC, True)
   negative_cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_contrastive, labels=tf.constant(0.0, shape=[FLAGS.batch_size, 1])))
 
   cost_contrastive = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_contrastive, labels=tf.constant(1.0, shape=[FLAGS.batch_size, 1])))
 
   reg_loss = get_regularization(contrastive_cd, contrastive_cc, cd_samples, cc_samples)
-  loss_d = cost_sample + negative_cost_contrastive + reg_loss
-  loss_g = cost_contrastive + reg_loss
+  loss_d = cost_sample + negative_cost_contrastive + FLAGS.lambda0*reg_loss
+  loss_g = cost_contrastive + FLAGS.lambda0*reg_loss
 
-  disc_opt = get_opt(loss_d, "discriminator")
-  gen_opt = get_opt(loss_g, "generator")
+  disc_opt = get_opt_D(loss_d, "discriminator")
+  gen_opt = get_opt_G(loss_g, "generator")
 
-  points_data = tf.sigmoid(logits_data)
-  points_contrastive = tf.sigmoid(logits_contrastive)
+  points_data = tf.reduce_mean(tf.sigmoid(logits_data))
+  points_contrastive = tf.reduce_mean(tf.sigmoid(logits_contrastive))
 
   start = datetime.now()
   print("Start: " +  start.strftime("%Y-%m-%d_%H-%M-%S"))
@@ -284,6 +344,8 @@ def main(args):
       filename = "checkpoint" + dt.strftime("%Y-%m-%d_%H-%M-%S")
       checkpoint = os.path.join(save_dir, filename)
 
+    val_cost_sample_val = 1.0
+    cost_contrastive_val = 0
     max_itr = train_size//FLAGS.batch_size
     for epoch in range(FLAGS.max_epoch):
       random.shuffle(train_set)
@@ -302,16 +364,21 @@ def main(args):
 
         sess.run(gen_opt, feed_dict=feed_dict)
         _, cost_contrastive_val, points_contrastive_val = sess.run([gen_opt, cost_contrastive, points_contrastive], feed_dict=feed_dict)
+#        while np.abs(cost_sample_val - cost_contrastive_val) >  2.0:
+#          print("-", end='')
+#          sess.run(gen_opt, feed_dict=feed_dict)
+#          _, cost_contrastive_val, points_contrastive_val = sess.run([gen_opt, cost_contrastive, points_contrastive], feed_dict=feed_dict)
 
         if itr > 1 and itr % 10 == 0:
+          print("")
           print("===================================================================")
           print("[%d] %03d/%d"%(epoch, itr, max_itr))
 
           #cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
-          print("\tcost_sample=%f points_data[0]:%f"%(cost_sample_val,  points_data_val[0]))
+          print("\tcost_sample=%f points_data[0]:%f"%(cost_sample_val,  points_data_val))
 
           #cost_contrastive_val, points_contrastive_val = sess.run([cost_contrastive, points_contrastive], feed_dict=feed_dict)
-          print("\tcost_contrastive=%f points_contrastive[0]:%f"%(cost_contrastive_val, points_contrastive_val[0]))
+          print("\tcost_contrastive=%f points_contrastive[0]:%f"%(cost_contrastive_val, points_contrastive_val))
 
           #sample_val = sess.run([samples[0]], feed_dict=feed_dict)
           cd_val, cc_val, contrastive_sample_val = sess.run([cd_samples, cc_samples,  contrastive_samples], feed_dict=feed_dict)
@@ -321,15 +388,21 @@ def main(args):
           current = datetime.now()
           print("\telapsed:", current - start)
 
-          sample_vis = convert_img(batch_data[0])
-          contrastive_sample_vis = convert_img(contrastive_sample_val[0])
+          imgs = []
+          for i in range(FLAGS.batch_size):
+            sample_vis = convert_img(batch_data[i])
+            contrastive_sample_vis = convert_img(contrastive_sample_val[i])
 
-          cv2.imshow('sample', img_listup(sample_vis, contrastive_sample_vis))
-          filepath = os.path.join(save_dir, "generated" + "_%d"%(np.argmax(cd_val)) + "_%02d"%(epoch) + "_%02d"%(itr%100) + ".png")
+            if i < 20:
+              imgs.append(contrastive_sample_vis)
+            filepath = os.path.join(save_dir, "generated" + "_%02d"%(epoch) + "_%d"%(np.argmax(cd_val)) + "_%02d"%(itr%100) + ".png")
+            #filepath = os.path.join(save_dir, "generated" + "_%d"%(np.argmax(cd_val[i])) + "_%02d"%(itr%100) + ".png")
 
-          scipy.misc.imsave(filepath, contrastive_sample_vis)
+            scipy.misc.imsave(filepath, contrastive_sample_vis)
+          cv2.imshow('sample' + str(i), img_listup(imgs))
         cv2.waitKey(5)
 
+      print("#######################################################")
       # evaluate
       total_cost_val = 0.0
       max_val_itr = len(val_set)//FLAGS.batch_size
@@ -343,9 +416,9 @@ def main(args):
         cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
         cost_sample_val = sess.run(cost_sample, feed_dict=feed_dict)
         total_cost_val += cost_sample_val
-      print("Validation loss: %f"%(total_cost_val/max_val_itr))
+        val_cost_sample_val = total_cost_val/max_val_itr
+      print("Validation loss: %f"%(val_cost_sample_val))
 
-      print("#######################################################")
       saver.save(sess, checkpoint)
 
 
