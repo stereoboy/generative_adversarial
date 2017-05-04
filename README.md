@@ -29,5 +29,33 @@
 
 ## InfoGAN
 * Generate  hand-written number images based on mnist data
+* Need to fine-tune parameters
+  * It is delicate to make InfoGan converge. It is easy to make simple GAN converge. But fine-tuning is needed when applying latent codes.
+* Use simple adaptive generator optimization.
+  * accuracy 0.4
+* Use categorical latent code only (continuous latent code)
+### Result
+
+* After 14 epochs
+
+<img src="./info_mnist_checkpoints/vis_00_00.png">
+<img src="./info_mnist_checkpoints/vis_00_10.png">
+<img src="./info_mnist_checkpoints/vis_00_20.png">
+<img src="./info_mnist_checkpoints/vis_00_30.png">
+<img src="./info_mnist_checkpoints/vis_00_40.png">
+
+* After 15 epochs
+
+<img src="./info_mnist_checkpoints/vis_01_00.png">
+<img src="./info_mnist_checkpoints/vis_01_10.png">
+<img src="./info_mnist_checkpoints/vis_01_20.png">
+<img src="./info_mnist_checkpoints/vis_01_30.png">
+<img src="./info_mnist_checkpoints/vis_01_40.png">
+
+* comments
+  * '8' to class #0, '1' to class #1, '3' to class #2, and so on.
+  * '7', '9', '4' are not distinguishable in this result, this means that encoding of '7', '9', '4' into distinct codes failed.
+    * But network can encode these 3 numbers into separate codes in another trial.
+    * Whenever I try it, different result comes. Sometimes I succed all, sometime fail 2 numbers.
 
 ## Adversarial Autoencoders
