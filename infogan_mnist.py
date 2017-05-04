@@ -14,7 +14,7 @@ import random
 ############################################################
 #
 # reference:
-#  * https://github.com/openai/InfoGAN.git 
+#  * https://github.com/openai/InfoGAN.git
 #    * infogan related logic
 #  * https://github.com/Newmu/dcgan_code.git
 #  * https://github.com/soumith/dcgan.torch.git
@@ -26,14 +26,15 @@ import random
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("channel", "1", "batch size for training")
-tf.flags.DEFINE_integer("max_epoch", "10", "maximum iterations for training")
+tf.flags.DEFINE_integer("max_epoch", "100", "maximum iterations for training")
 tf.flags.DEFINE_integer("batch_size", "128", "batch size for training")
 tf.flags.DEFINE_integer("z_dim", "62", "size of input vector to generator")
 tf.flags.DEFINE_integer("cd_dim", "10", "size of discrete code")
 tf.flags.DEFINE_integer("cc_dim", "2", "size of continuous code")
-tf.flags.DEFINE_float("lambda0", "1.0", "lambda for Regularization Term")
+tf.flags.DEFINE_float("lambda0", "1.00", "lambda for Regularization Term")
 tf.flags.DEFINE_float("learning_rate_D", "2e-4", "Learning rate for Adam Optimizer")
-tf.flags.DEFINE_float("learning_rate_G", "1e-3", "Learning rate for Adam Optimizer")
+#tf.flags.DEFINE_float("learning_rate_G", "1e-3", "Learning rate for Adam Optimizer")
+tf.flags.DEFINE_float("learning_rate_G", "2e-4", "Learning rate for Adam Optimizer")
 tf.flags.DEFINE_float("eps", "1e-5", "epsilon for various operation")
 tf.flags.DEFINE_float("beta1", "0.5", "beta1 for Adam optimizer")
 tf.flags.DEFINE_float("pt_w", "0.1", "weight of pull-away term")
@@ -62,8 +63,8 @@ def init_disc_weights():
   ch_size = FLAGS.d_ch_size
   # initialize weights, biases for Encoder
   WEs = [
-      tf.get_variable('e_conv_0', shape = [4, 4, FLAGS.channel, ch_size], initializer=init_with_normal()),
-      tf.get_variable('e_conv_1', shape = [4, 4, ch_size, ch_size*2], initializer=init_with_normal()),
+      tf.get_variable('e_conv_0', shape = [5, 5, FLAGS.channel, ch_size], initializer=init_with_normal()),
+      tf.get_variable('e_conv_1', shape = [5, 5, ch_size, ch_size*2], initializer=init_with_normal()),
       ]
   
   BEs = [
@@ -94,10 +95,6 @@ def init_disc_weights():
   return WEs, BEs, WFCS, BFCS, WY, BY, WC, BC
 
 def disc_model(x, WEs, BEs, WFCS, BFCS, WY, BY, WC, BC, reuse):
-  def batch_normalization(tensor):
-    mean, var = tf.nn.moments(tensor, [0, 1, 2])
-    out = tf.nn.batch_normalization(tensor, mean, var, 0, 1, FLAGS.eps)
-    return out
 
   def leaky_relu(tensor):
     return tf.maximum(tensor*0.2, tensor)
@@ -162,7 +159,7 @@ def init_gen_weights():
 
   # initialize weights, biases for Generator
   # shape=[kernel_size, kernel_size, (!)out_ch_size, (!)in_ch_size] for conv2d_transposed
-  kernel_size = 4 
+  kernel_size = 5
   WGs = [
       tf.get_variable('g_conv_0', shape = [kernel_size, kernel_size, 64, 128], initializer=init_with_normal()),
       tf.get_variable('g_conv_1', shape = [kernel_size, kernel_size, 1, 64], initializer=init_with_normal()),
@@ -175,11 +172,6 @@ def init_gen_weights():
   return WPJ, BPJ, WGs, BGs
 
 def gen_model(z_vecs, WPJ, BPJ, WGs, BGs):
-  def batch_normalization(tensor):
-    mean, var = tf.nn.moments(tensor, [0, 1, 2])
-    out = tf.nn.batch_normalization(tensor, mean, var, 0, 1, FLAGS.eps)
-    return out
-
   img_size = FLAGS.img_size
   ch_size = FLAGS.g_ch_size
   batch_size = FLAGS.batch_size
@@ -209,16 +201,18 @@ def gen_model(z_vecs, WPJ, BPJ, WGs, BGs):
   # no tanh
   #contrastive_samples = tf.clip_by_value(deconved, 0, 1.0)
   contrastive_samples = tf.sigmoid(deconved)
+  #contrastive_samples = deconved
   return contrastive_samples
 
 def get_regularization(cd, cc, cd_samples, cc_samples):
   # FIXME
 
   cd_cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=cd, labels=cd_samples))
-  cc_cross_entropy = tf.reduce_sum(tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=cc, labels=cc_samples), 0))
+  #cc_cross_entropy = tf.reduce_sum(tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=cc, labels=cc_samples), 0))
 
-  return cd_cross_entropy + cc_cross_entropy
-
+  ret = cd_cross_entropy
+  #ret = cd_cross_entropy + cc_cross_entropy
+  return  ret
 def get_opt_D(loss_val, scope):
   var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
 
@@ -265,9 +259,31 @@ def img_listup(imgs):
 
 def convert_img(data):
   np.set_printoptions(threshold=np.nan)
-  out = cv2.resize(255* data.reshape(FLAGS.img_size, FLAGS.img_size), (64,64), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
+
+  #data = np.clip(data, 0.0, 1.0)
+  out = cv2.resize(255* data.reshape(FLAGS.img_size, FLAGS.img_size), (56,56), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
+  #out = cv2.resize(255* data.reshape(FLAGS.img_size, FLAGS.img_size), (56,56)).astype(np.uint8)
+  #out = (255*data.reshape(FLAGS.img_size, FLAGS.img_size)).astype(np.uint8)
   #out = cv2.resize(255* data.reshape(FLAGS.img_size, FLAGS.img_size), (64,64)).astype(np.uint8)
   return out
+
+def get_random_descrete_codes():
+  cd_data = np.random.randint(0, FLAGS.cd_dim, size=(FLAGS.batch_size))
+  return cd_data
+
+def get_random_continuous_codes():
+  cc_data = np.random.uniform(-1, 1, size=(FLAGS.batch_size, 2))
+  return cc_data
+
+def get_random_z():
+  z_data = np.random.uniform(-1, 1, size=(FLAGS.batch_size, FLAGS.z_dim))
+  return z_data
+
+def get_random_codes():
+  cd_data = get_random_descrete_codes()
+  cc_data = get_random_continuous_codes()
+  z_data = get_random_z()
+  return cd_data, cc_data, z_data
 
 def main(args):
   opts, args = getopt.getopt(sys.argv[1:], "s:", ["save_dir="])
@@ -286,16 +302,21 @@ def main(args):
   test_set = mnist.test.images
 
   #train_set = np.concatenate([train_set, val_set, test_set], axis=0)
+  #train_set = np.concatenate([train_set, test_set], axis=0)
   train_size = len(train_set)
 
   # setup for noise and code sample
   z_samples = tf.random_uniform([FLAGS.batch_size, FLAGS.z_dim], minval= -1.0, maxval=1.0)
+  #z_samples = tf.placeholder(tf.float32, [FLAGS.batch_size, FLAGS.z_dim])
 
-  cd_samples_ = tf.reshape(tf.multinomial([[1.0]*FLAGS.cd_dim], FLAGS.batch_size), (-1, 1))
-  onehot = tf.constant(np.eye(FLAGS.cd_dim, dtype=np.float32))
-  cd_samples = tf.reshape(tf.nn.embedding_lookup(onehot, cd_samples_), (-1, FLAGS.cd_dim))
+#  cd_samples_ = tf.reshape(tf.multinomial([[1.0]*FLAGS.cd_dim], FLAGS.batch_size), (-1, 1))
+#  onehot = tf.constant(np.eye(FLAGS.cd_dim, dtype=np.float32))
+#  cd_samples = tf.reshape(tf.nn.embedding_lookup(onehot, cd_samples_), (-1, FLAGS.cd_dim))
+  _cd_samples = tf.placeholder(tf.int32, [FLAGS.batch_size])
+  cd_samples = tf.one_hot(_cd_samples, FLAGS.cd_dim)
 
-  cc_samples = tf.random_uniform([FLAGS.batch_size, FLAGS.cc_dim], minval = -1.0, maxval=1.0)
+  #cc_samples = tf.random_uniform([FLAGS.batch_size, FLAGS.cc_dim], minval = -1.0, maxval=1.0)
+  cc_samples = tf.placeholder(tf.float32, [FLAGS.batch_size, FLAGS.cc_dim])
 
   z_vecs = tf.concat(axis=1, values=[z_samples, cd_samples, cc_samples])
 
@@ -348,26 +369,32 @@ def main(args):
     cost_contrastive_val = 0
     max_itr = train_size//FLAGS.batch_size
     for epoch in range(FLAGS.max_epoch):
-      random.shuffle(train_set)
+      #random.shuffle(train_set)
       print("#####################################################################")
       for itr in range(0, max_itr):
+      #for itr in range(0, 0):
 
         begin = itr*FLAGS.batch_size
         end = (itr + 1)*FLAGS.batch_size
         batch_data = train_set[begin:end]
         batch_data = batch_data.reshape(-1, FLAGS.img_size, FLAGS.img_size, 1)
 
-        feed_dict = {samples: batch_data}
-
+        cd_data, cc_data, z_data = get_random_codes()
+        feed_dict = {samples: batch_data, _cd_samples: cd_data, cc_samples: cc_data}
         _, cost_sample_val, points_data_val = sess.run([disc_opt, cost_sample, points_data], feed_dict=feed_dict)
         #cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
 
+        cd_data, cc_data, z_data = get_random_codes()
+        feed_dict = {samples: batch_data, _cd_samples: cd_data, cc_samples: cc_data}
         sess.run(gen_opt, feed_dict=feed_dict)
+        
+        cd_data, cc_data, z_data = get_random_codes()
+        feed_dict = {samples: batch_data, _cd_samples: cd_data, cc_samples: cc_data}
         _, cost_contrastive_val, points_contrastive_val = sess.run([gen_opt, cost_contrastive, points_contrastive], feed_dict=feed_dict)
-#        while np.abs(cost_sample_val - cost_contrastive_val) >  2.0:
-#          print("-", end='')
-#          sess.run(gen_opt, feed_dict=feed_dict)
-#          _, cost_contrastive_val, points_contrastive_val = sess.run([gen_opt, cost_contrastive, points_contrastive], feed_dict=feed_dict)
+        while epoch > 0 and points_contrastive_val < 0.40:
+          print("-", end='')
+          sess.run(gen_opt, feed_dict=feed_dict)
+          _, cost_contrastive_val, points_contrastive_val = sess.run([gen_opt, cost_contrastive, points_contrastive], feed_dict=feed_dict)
 
         if itr > 1 and itr % 10 == 0:
           print("")
@@ -380,7 +407,11 @@ def main(args):
           #cost_contrastive_val, points_contrastive_val = sess.run([cost_contrastive, points_contrastive], feed_dict=feed_dict)
           print("\tcost_contrastive=%f points_contrastive[0]:%f"%(cost_contrastive_val, points_contrastive_val))
 
-          #sample_val = sess.run([samples[0]], feed_dict=feed_dict)
+          cv2.imshow('input', cv2.resize(img_listup(255*np.squeeze(batch_data[:20])), (56*20, 56), cv2.INTER_NEAREST))
+
+          cd_data, cc_data, z_data = get_random_codes()
+          cd_data = np.array(list(range(FLAGS.batch_size)), np.int32)%FLAGS.cd_dim
+          feed_dict = {_cd_samples: cd_data, cc_samples: cc_data}
           cd_val, cc_val, contrastive_sample_val = sess.run([cd_samples, cc_samples,  contrastive_samples], feed_dict=feed_dict)
           print("\tcd:{}".format(cd_val[0]))
           print("\tcc:{}".format(cc_val[0]))
@@ -389,35 +420,96 @@ def main(args):
           print("\telapsed:", current - start)
 
           imgs = []
-          for i in range(FLAGS.batch_size):
+          for i in range(20):
             sample_vis = convert_img(batch_data[i])
             contrastive_sample_vis = convert_img(contrastive_sample_val[i])
 
-            if i < 20:
-              imgs.append(contrastive_sample_vis)
-            filepath = os.path.join(save_dir, "generated" + "_%02d"%(epoch) + "_%d"%(np.argmax(cd_val)) + "_%02d"%(itr%100) + ".png")
+            imgs.append(contrastive_sample_vis)
+            filepath = os.path.join(save_dir, "generated" + "_%02d"%(epoch) + "_%d"%(np.argmax(cd_val[i])) + "_%02d"%(itr%100) + ".png")
             #filepath = os.path.join(save_dir, "generated" + "_%d"%(np.argmax(cd_val[i])) + "_%02d"%(itr%100) + ".png")
 
             scipy.misc.imsave(filepath, contrastive_sample_vis)
-          cv2.imshow('sample' + str(i), img_listup(imgs))
+          vis_0 = img_listup(imgs[:10])
+          cv2.imshow('sample 0', vis_0)
+          filepath = os.path.join(save_dir, "vis" + "_%02d"%(epoch) + "_%02d"%(itr%100) + ".png")
+          scipy.misc.imsave(filepath, vis_0)
+         
+          ################################################################
+          cd_data, cc_data, z_data = get_random_codes()
+          cd_data = np.full((FLAGS.batch_size), 0, np.int32)
+          feed_dict = {_cd_samples: cd_data, cc_samples: cc_data}
+          cd_val, cc_val, contrastive_sample_val = sess.run([cd_samples, cc_samples,  contrastive_samples], feed_dict=feed_dict)
+          print("\tcd:{}".format(cd_val[0]))
+          print("\tcc:{}".format(cc_val[0]))
+
+          current = datetime.now()
+          print("\telapsed:", current - start)
+
+          imgs = []
+          for i in range(20):
+            sample_vis = convert_img(batch_data[i])
+            contrastive_sample_vis = convert_img(contrastive_sample_val[i])
+
+            imgs.append(contrastive_sample_vis)
+            filepath = os.path.join(save_dir, "generated" + "_%02d"%(epoch) + "_%d"%(np.argmax(cd_val[i])) + "_%02d"%(itr%100) + ".png")
+            #filepath = os.path.join(save_dir, "generated" + "_%d"%(np.argmax(cd_val[i])) + "_%02d"%(itr%100) + ".png")
+
+            scipy.misc.imsave(filepath, contrastive_sample_vis)
+          cv2.imshow('sample1', img_listup(imgs))
         cv2.waitKey(5)
 
       print("#######################################################")
-      # evaluate
-      total_cost_val = 0.0
-      max_val_itr = len(val_set)//FLAGS.batch_size
-      for itr in range(0, max_val_itr):
-        begin = itr*FLAGS.batch_size
-        end = (itr + 1)*FLAGS.batch_size
-        batch_data = val_set[begin:end]
-        batch_data = batch_data.reshape(-1, FLAGS.img_size, FLAGS.img_size, 1)
+#      # evaluate
+#      total_cost_val = 0.0
+#      max_val_itr = len(val_set)//FLAGS.batch_size
+#      for itr in range(0, max_val_itr):
+#        begin = itr*FLAGS.batch_size
+#        end = (itr + 1)*FLAGS.batch_size
+#        batch_data = val_set[begin:end]
+#        batch_data = batch_data.reshape(-1, FLAGS.img_size, FLAGS.img_size, 1)
+#
+#        feed_dict = {samples: batch_data}
+#        cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
+#        cost_sample_val = sess.run(cost_sample, feed_dict=feed_dict)
+#        total_cost_val += cost_sample_val
+#        val_cost_sample_val = total_cost_val/max_val_itr
+#      print("Validation loss: %f"%(val_cost_sample_val))
 
-        feed_dict = {samples: batch_data}
-        cost_sample_val, points_data_val = sess.run([cost_sample, points_data], feed_dict=feed_dict)
-        cost_sample_val = sess.run(cost_sample, feed_dict=feed_dict)
-        total_cost_val += cost_sample_val
-        val_cost_sample_val = total_cost_val/max_val_itr
-      print("Validation loss: %f"%(val_cost_sample_val))
+      img_save_dir = FLAGS.save_dir + "/epoch_" + str(epoch)
+      if not os.path.exists(img_save_dir):
+        os.mkdir(img_save_dir)
+
+#      for cd in range(FLAGS.cd_dim):
+#      #for cd in range(1):
+#        cd_data = np.array(list(range(FLAGS.batch_size)), np.int32)%FLAGS.cd_dim
+#        #cd_data = np.array([cd]*FLAGS.batch_size, np.int32)%FLAGS.cd_dim
+#        cc_data = get_random_continuous_codes()
+#        #feed_dict = {_cd_samples: cd_data, cc_samples: cc_data}
+#        z_data = get_random_z()
+#        feed_dict = {samples: batch_data, _cd_samples: cd_data, cc_samples: cc_data}
+#        cd_val, cc_val, contrastive_sample_val = sess.run([cd_samples, cc_samples,  contrastive_samples], feed_dict=feed_dict)
+#        imgs = []
+#        for i in range(20):
+#          contrastive_sample_vis = convert_img(contrastive_sample_val[i])
+#          imgs.append(contrastive_sample_vis)
+#          filepath = os.path.join(img_save_dir, "generated" + "_%d"%(np.argmax(cd_val[i])) + "_%02d"%(i) + ".png")
+#          scipy.misc.imsave(filepath, contrastive_sample_vis)
+#        cv2.imshow('class' + str(cd), img_listup(imgs))
+
+      for i in range(11):
+        #cc_data = get_random_continuous_codes()
+        cd_data = np.array(list(range(FLAGS.batch_size)), np.int32)%FLAGS.cd_dim
+        offset = 0.2
+        cc_data = np.array([[-1.0 + i*offset, np.random.uniform(-1, 1)] for _ in range(FLAGS.batch_size)], np.float32)
+        feed_dict = {_cd_samples: cd_data, cc_samples: cc_data}
+        cd_val, cc_val, contrastive_sample_val = sess.run([cd_samples, cc_samples,  contrastive_samples], feed_dict=feed_dict)
+        imgs = []
+        for j in range(2*FLAGS.cd_dim):
+          contrastive_sample_vis = convert_img(contrastive_sample_val[j])
+          imgs.append(contrastive_sample_vis)
+          filepath = os.path.join(img_save_dir, "generated" + "_%d"%(np.argmax(cd_val[j])) + "_%f"%(cc_val[j][0]) + ".png")
+          scipy.misc.imsave(filepath, contrastive_sample_vis)
+        cv2.imshow('class' + str(i), img_listup(imgs))
 
       saver.save(sess, checkpoint)
 
